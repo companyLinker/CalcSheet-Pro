@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Excel to IIF Converter</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='bootstrap.min.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='styles.css') }}"
+    />
+  </head>
+  <body>
+    <section class="main-section">
+      <div class="container">
+        <h1 class="text-center mb-5">CalcSheet Pro</h1>
+        {% with messages = get_flashed_messages(with_categories=true) %} {% if
+        messages %}
+        <ul class="flashes">
+          {% for category, message in messages %}
+          <li class="{{ category }}">{{ message }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %} {% endwith %}
+        <div class="form-container">
+          <form
+            action="/upload"
+            method="post"
+            enctype="multipart/form-data"
+          >
+            <div class="row gy-5">
+              <div class="col-12">
+                <label for="excel_file" class="form-label"
+                  >Upload Excel Sheet</label
+                >
+                <input
+                  class="form-control form-control-lg"
+                  type="file"
+                  id="excel_file"
+                  name="excel_file"
+                  accept=".csv, .xlsx"
+                  required
+                />
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="mapping_file"
+                  >Upload COA Mapping File Format:</label
+                >
+                <input
+                  class="form-control form-control-lg"
+                  type="file"
+                  id="mapping_file"
+                  name="mapping_file"
+                  accept=".csv, .xlsx"
+                />
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="bank_mapping_file"
+                  >Upload Bank Mapping File Format:</label
+                >
+                <input
+                  class="form-control form-control-lg"
+                  type="file"
+                  id="bank_mapping_file"
+                  name="bank_mapping_file"
+                  accept=".csv, .xlsx"
+                />
+              </div>
+              <div class="col-12">
+                <button class="dowload-btn btn btn-light btn-lg" type="submit">Download</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+    <!-- JAVASCRIPT FILES -->
+    <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
+  </body>
+</html>
