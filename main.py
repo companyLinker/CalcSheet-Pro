@@ -162,4 +162,4 @@ def replace_col_name(new_col_name, store_name, bank_mappings_df):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0')
+    app.run()
