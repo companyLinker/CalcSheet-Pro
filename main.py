@@ -1,119 +1,165 @@
-from flask import Flask, request, send_file, render_template, flash
 import os
-import pandas as pd
-import io
 import zipfile
+from io import BytesIO
+import pandas as pd
 import datetime
-import logging
+from flask import Flask, request, send_file, render_template
+
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here'
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-
-def excel_to_iif(excel_file, coa_mapping_file, output_dir):
-    app.logger.info(f"Starting excel_to_iif function with files: {excel_file}, {coa_mapping_file}")
-    try:
-        # Read the Excel file
-        df = pd.read_csv(excel_file, encoding='ISO-8859-1')
-        app.logger.info(f"Excel file read successfully. Shape: {df.shape}")
-        
-        # Read the COA mapping file
-        mappings_df = pd.read_csv(coa_mapping_file)
-        column_mappings = dict(zip(mappings_df['original_name'], mappings_df['new_name']))
-        app.logger.info(f"COA mapping file read successfully. Mappings: {column_mappings}")
-        
-        # Group by Store Name
-        grouped = df.groupby('Store Name')
-        if grouped.ngroups == 0:
-            app.logger.error("No groups found. Check if 'Store Name' column exists and is correctly filled.")
-            return
-        
-        for store_name, store_data in grouped:
-            app.logger.info(f"Processing store: {store_name}")
-            iif_filename = f"{store_name}.iif"
-            iif_path = os.path.join(output_dir, iif_filename)
-            
-            with open(iif_path, 'w') as f:
-                # Write IIF header
-                f.write('!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\n')
-                f.write('!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\n')
-                f.write('!ENDTRNS\n')
-                
-                for _, row in store_data.iterrows():
-                    date = datetime.datetime.strptime(str(row['Date']), '%m/%d/%Y').strftime('%m/%d/%Y')
-                    total = sum(float(row[col]) for col in ['#1', '#2', '#3', '#4', '#5'] if col in row)
-                    
-                    # Write TRNS line
-                    f.write(f"TRNS\t\tDEPOSIT\t{date}\t{store_name} Deposits\t\t\t{total:.2f}\t\tDeposit\tN\tN\n")
-                    
-                    # Write SPL lines
-                    for col in row.index:
-                        if col in column_mappings and col not in ['Store Name', 'Date', 'Customer Cou', '#1', '#2', '#3', '#4', '#5']:
-                            amount = float(row[col])
-                            if amount != 0:
-                                mapped_col = column_mappings[col]
-                                f.write(f"SPL\t\tDEPOSIT\t{date}\t{mapped_col}\t\t\t{amount:.2f}\t\t{col}\tN\tN\n")
-                
-                # Write ENDTRNS
-                f.write('ENDTRNS\n')
-            
-            app.logger.info(f"Finished processing store: {store_name}")
-        
-        app.logger.info(f"Finished excel_to_iif function")
-    except Exception as e:
-        app.logger.error(f"An error occurred in excel_to_iif function: {str(e)}")
-
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
-    if request.method == 'POST':
-        # Check if the post request has the file parts
-        if 'excel_file' not in request.files or 'coa_mapping' not in request.files:
-            flash('One or more required files are missing', 'error')
-            return render_template('index.html')
-        
-        excel_file = request.files['excel_file']
-        coa_mapping = request.files['coa_mapping']
-        
-        if excel_file.filename == '' or coa_mapping.filename == '':
-            flash('No selected file', 'error')
-            return render_template('index.html')
-        
-        if excel_file and coa_mapping:
-            try:
-                # Save uploaded files temporarily
-                excel_file.save('temp_excel_file.csv')
-                coa_mapping.save('temp_coa_mapping.csv')
-
-                # Process files
-                output_dir = 'temp_output'
-                if not os.path.exists(output_dir):
-                    os.mkdir(output_dir)
-
-                excel_to_iif('temp_excel_file.csv', 'temp_coa_mapping.csv', output_dir)
-
-                # Create a zip file of all output files
-                memory_file = io.BytesIO()
-                with zipfile.ZipFile(memory_file, 'w') as zf:
-                    for root, dirs, files in os.walk(output_dir):
-                        for file in files:
-                            zf.write(os.path.join(root, file), file)
-                memory_file.seek(0)
-
-                # Clean up temporary files
-                os.remove('temp_excel_file.csv')
-                os.remove('temp_coa_mapping.csv')
-                for file in os.listdir(output_dir):
-                    os.remove(os.path.join(output_dir, file))
-                os.rmdir(output_dir)
-
-                return send_file(memory_file, download_name='output.zip', as_attachment=True)
-            except Exception as e:
-                flash(f'An error occurred: {str(e)}', 'error')
-                return render_template('index.html')
-
     return render_template('index.html')
 
+@app.route('/upload', methods=['POST'])
+def upload_files():
+    # Read uploaded mapping and excel files
+    mappings_df = pd.read_csv(request.files['mapping_file'],encoding='ISO-8859-1')
+    bank_mappings_df = pd.read_csv(request.files['bank_mapping_file'],encoding='ISO-8859-1')
+    print(mappings_df.head)
+    print(bank_mappings_df.head)
+    excel_file = pd.read_csv(request.files['excel_file'])
+
+    # Create a directory to store the output files
+    output_dir = 'output'
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Generate output files
+    excel_to_iif(excel_file, output_dir, mappings_df, bank_mappings_df)
+
+    # Create a zip file
+    zip_filename = 'output_files.zip'
+    zip_path = os.path.join(output_dir, zip_filename)
+    with zipfile.ZipFile(zip_path, 'w') as zip_ref:
+        for root, dirs, files in os.walk(output_dir):
+            for file in files:
+                if file not in [zip_filename, 'output.zip']:  # exclude the zip file itself and output.zip
+                    file_path = os.path.join(root, file)
+                    zip_ref.write(file_path, os.path.relpath(file_path, output_dir))
+
+    # Send the zip file as a response
+    return send_file(zip_path, as_attachment=True, download_name=zip_filename)
+
+def excel_to_iif(excel_file, output_dir, mappings_df, bank_mappings_df):
+    df = excel_file
+    column_name = 'Store Name'
+    unique_store_names = df[column_name].unique()
+    print(unique_store_names)
+
+    for desired_store_name in unique_store_names:
+        filtered_df = df[(df[column_name] == desired_store_name)]
+        iif_filename = f"{desired_store_name}.iif"
+        iif_path = os.path.join(output_dir, iif_filename)
+        iif_content = '!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\n!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\n!ENDTRNS\n'
+        
+        for _, row in filtered_df.iterrows():
+            for new_col_name, cell_value in row.items():
+                if new_col_name != 'Store Name' and new_col_name != 'Customer Cou' and new_col_name == 'Date':
+                    if cell_value != 0 and cell_value != '&nbsp;':
+                        custom_fix_memo = get_custom_fix_memo(new_col_name, row)
+                        total1_value = total1(row)
+                        store_name = row['Store Name']
+                        new_col_name = replace_col_name(new_col_name, store_name, bank_mappings_df)
+                        cell_value1 = datetime.datetime.strptime(str(row['Date']), '%m/%d/%Y').date()
+                        value1 = float(row['#1          '])
+                        value2 = float(row['#2          '])
+                        value3 = float(row['#3          '])
+                        value4 = float(row['#4          '])
+                        value5 = float(row['#5          '])
+                        Total_val = round(value1 + value2 + value3 + value4 + value5, 2)
+                        iif_content += f"TRNS\t\tDEPOSIT\t{cell_value1}\t{new_col_name}\t\t{Total_val}\t\t{total1_value}\tN\n"
+                        break
+
+            for col_name, cell_value in row.items():
+                if col_name != 'Store Name' and col_name != 'Date' and col_name != 'Customer Cou' and col_name not in ['#1          ', '#2          ', '#3          ', '#4          ', '#5          ']:
+                    if cell_value != 0 or col_name == 'Cash Shortage':
+                        custom_fix_memo = get_custom_fix_memo(col_name, row)
+                        col_name = replace_col_name1(col_name, mappings_df)
+                        cell_value1 = datetime.datetime.strptime(str(row['Date']), '%m/%d/%Y').date()
+                        iif_content += f'SPL\t\tDEPOSIT\t{cell_value1}\t{col_name}\t\t{cell_value}\t\t{custom_fix_memo}\tN\n'   
+            iif_content += 'ENDTRNS\n'
+        
+        with open(iif_path, 'w') as f:
+            f.write(iif_content)
+
+def total1(row):
+    val1 = round(float(row['#1          ']), 2)
+    val2 = round(float(row['#2          ']), 2)
+    val3 = round(float(row['#3          ']), 2)
+    val4 = round(float(row['#4          ']), 2)
+    val5 = round(float(row['#5          ']), 2)
+    
+    if val2 == 0 and val3 == 0 and val4 == 0 and val5 == 0:
+        return str(val1)
+    elif val3 == 0 and val4 == 0 and val5 == 0:
+        return str(val1) + '+' + str(val2)
+    elif val4 == 0 and val5 == 0:
+        return str(val1) + '+' + str(val2) + '+' + str(val3)
+    elif val5 == 0:
+        return str(val1) + '+' + str(val2) + '+' + str(val3) + '+' + str(val4)
+    else:
+        return str(val1) + '+' + str(val2) + '+' + str(val3) + '+' + str(val4) + '+' + str(val5)
+
+def get_custom_fix_memo(col_name, row):
+    if col_name == 'MDA Donate     ':
+        return 'MDA Donate'
+    elif col_name == 'Taxable Sales_I':
+        return 'FOOD SALES:Food Sale - Store:Taxable'
+    elif col_name == 'Non-Taxable Sal_I':
+        return 'FOOD SALES:Food Sale - Store:Non Taxable'
+    elif col_name == 'Taxable Sales_D':
+        return ''
+    elif col_name == 'Taxable Sales_G':
+        return ''
+    elif col_name == 'Taxable Sales_U':
+        return ''
+    elif col_name == 'Non-Taxable Sal_D':
+        return ''
+    elif col_name == 'Non-Taxable Sal_G':
+        return ''
+    elif col_name == 'Non-Taxable Sal_U':
+        return ''
+    elif col_name == 'Surcharge DLV':
+        return 'Surcharge DLV'
+    elif col_name == 'Smart Cart F':
+        return 'Smart Cart F'
+    elif col_name == 'Unknown Sales':
+        return 'Unknown Sales'
+    elif col_name == 'Cents Sale':
+        return 'Service Fee/Discounts'
+    elif col_name == 'Instore Mobile':
+        return 'Instore Mobile GC'
+    elif col_name == 'EBT Total   ':
+        return 'EBT Card ask for clarification'
+    elif col_name == 'Taxable Sales  ':
+        return row['Customer Cou']
+    elif 'Taxable Sales  ' not in row and col_name =='Non-Taxable Sal':
+        return row['Customer Cou']
+    elif col_name == 'Cash Shortage':
+        return total1(row) 
+    else:
+        return ''      
+
+def replace_col_name1(col_name, mappings_df):
+    if 'original_name' in mappings_df.columns and 'new_name' in mappings_df.columns:
+        column_mappings = dict(zip(mappings_df['original_name'], mappings_df['new_name']))
+        return column_mappings.get(col_name.strip(), col_name)  
+    else:
+        return col_name  # or some other default value
+
+def replace_col_name(new_col_name, store_name, bank_mappings_df):
+    # Read the mappings from a CSV file
+    # Create a dataframe with the input values
+    input_df = pd.DataFrame({'new_col_name': [new_col_name], 'store_name': [store_name]})
+
+    # Merge the input dataframe with the mappings dataframe
+    merged_df = pd.merge(input_df, bank_mappings_df, on=['new_col_name', 'store_name'], how='left')
+
+    # Return the mapped column name if it exists, otherwise return an empty string
+    return merged_df['mapped_col_name'].iloc[0] if not merged_df['mapped_col_name'].isnull().iloc[0] else ''
+
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0')
